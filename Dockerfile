@@ -4,7 +4,9 @@ WORKDIR /src
 COPY src/Press.Web/Press.Web.csproj src/Press.Web/
 RUN dotnet restore src/Press.Web/Press.Web.csproj
 COPY src/Press.Web/ src/Press.Web/
-RUN dotnet publish src/Press.Web/Press.Web.csproj -c Release -o /app --no-restore /p:UseAppHost=false
+# без --no-restore: SDK подключает пакет со скриптами Blazor (_framework/blazor.web.js), только когда видит
+# Razor-компоненты, а при восстановлении выше в папке был один .csproj — иначе скрипт не попадёт в образ (404)
+RUN dotnet publish src/Press.Web/Press.Web.csproj -c Release -o /app /p:UseAppHost=false
 
 # Запуск
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
