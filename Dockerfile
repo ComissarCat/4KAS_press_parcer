@@ -8,6 +8,10 @@ RUN dotnet publish src/Press.Web/Press.Web.csproj -c Release -o /app --no-restor
 
 # Запуск
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# библиотека Kerberos нужна драйверу PostgreSQL — без неё в журнале сообщение libgssapi_krb5
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app .
 ENV Urls=http://+:8080 \

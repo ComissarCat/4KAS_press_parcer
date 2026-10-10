@@ -20,7 +20,8 @@ builder.Host.UseSystemd();        // то же для systemd (Linux)
 
 var connectionString = builder.Configuration.GetConnectionString("Default")
     ?? throw new InvalidOperationException("Не задана строка подключения ConnectionStrings:Default");
-builder.Services.AddDbContextFactory<AppDbContext>(o => o.UseNpgsql(connectionString));
+builder.Services.AddDbContextFactory<AppDbContext>(o =>
+    o.UseNpgsql(connectionString, npgsql => npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)));
 
 // Ключи шифрования cookie храним в базе — контейнер приложения не хранит состояния
 builder.Services.AddDataProtection()

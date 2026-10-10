@@ -62,7 +62,7 @@ public partial class SudrfPressCollector(HtmlFetcher fetcher, ILogger<SudrfPress
                     RepostSource = d.RepostSource,
                 });
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 log.LogWarning(ex, "Не удалось загрузить {Url}", entry.Url);
             }

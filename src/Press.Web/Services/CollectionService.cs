@@ -71,15 +71,17 @@ public class CollectionService(
                     : $"Новых публикаций: {added}, из них привязано к существующим материалам: {attached}";
                 result = new CollectRunResult(true, added, attached, resource.LastCollectMessage);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                log.LogWarning(ex, "Сбор с ресурса {Resource} завершился ошибкой", resource.Name);
+                var message = ErrorMessage(ex);
+                log.LogWarning("Сбор с ресурса {Resource} завершился ошибкой: {Message}", resource.Name, message);
+                log.LogDebug(ex, "Подробности ошибки сбора");
                 db.ChangeTracker.Clear();
                 db.Attach(resource);
                 resource.LastCollectedAt = DateTime.UtcNow;
                 resource.LastCollectFailed = true;
-                resource.LastCollectMessage = ex.Message;
-                result = new CollectRunResult(false, 0, 0, ex.Message);
+                resource.LastCollectMessage = message;
+                result = new CollectRunResult(false, 0, 0, message);
             }
             await db.SaveChangesAsync(ct);
             return result;
@@ -89,6 +91,16 @@ public class CollectionService(
             _lock.Release();
         }
     }
+
+    /// <summary>Понятное описание ошибки для страницы «Сбор».</summary>
+    private static string ErrorMessage(Exception ex) => ex switch
+    {
+        TaskCanceledException or TimeoutException =>
+            "Сайт не ответил вовремя (таймаут). Проверьте, доступен ли он с сервера или нужен ли прокси.",
+        HttpRequestException { StatusCode: { } code } => $"Сайт вернул ошибку {(int)code} ({code})",
+        HttpRequestException h => $"Не удалось подключиться к сайту: {h.Message}",
+        _ => ex.Message,
+    };
 
     public enum IngestOutcome { Skipped, Created, Attached }
 
@@ -245,7 +257,7 @@ public class CollectionScheduler(
             {
                 await RunDueAsync(ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 log.LogError(ex, "Ошибка планировщика сбора");
             }

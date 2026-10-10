@@ -27,7 +27,7 @@ public partial class PageMetadataService(HtmlFetcher fetcher, ILogger<PageMetada
             }
             return Parse(await fetcher.GetDocumentAsync(url, ct));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             log.LogInformation(ex, "Не удалось получить данные страницы {Url}", url);
             return new PageMetadata(null, null, null);
