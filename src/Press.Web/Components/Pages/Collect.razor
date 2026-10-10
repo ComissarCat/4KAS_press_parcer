@@ -1,0 +1,161 @@
+@page "/collect"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject CollectionService Collection
+@inject SettingsService Settings
+
+<PageTitle>Сбор публикаций</PageTitle>
+
+<h1 class="h3 mb-3">Сбор и мониторинг</h1>
+<p class="text-muted small">
+    Приложение само проверяет ресурсы с заданным интервалом. Здесь можно запустить проверку вручную
+    или загрузить архив собственных публикаций за прошедший период (первичное наполнение базы).
+    Найденные на сторонних ресурсах публикации — на странице <a href="inbox">«Проверка»</a>.
+</p>
+
+@if (message != null)
+{
+    <div class="alert @(success ? "alert-success" : "alert-danger") py-2">@message</div>
+}
+
+@foreach (var group in resources.GroupBy(r => r.IsOwn).OrderByDescending(g => g.Key))
+{
+<h2 class="h5 mt-4">@(group.Key ? "Собственные ресурсы" : "Мониторинг сторонних ресурсов")</h2>
+<table class="table align-middle">
+    <thead>
+    <tr>
+        <th>Ресурс</th>
+        <th>Способ</th>
+        <th>Последняя проверка</th>
+        <th style="width: 22rem"></th>
+    </tr>
+    </thead>
+    <tbody>
+    @foreach (var r in group)
+    {
+        <tr>
+            <td>
+                <a href="resources/@r.Id">@r.Name</a>
+                @if (!r.IsCollectorEnabled && r.CollectorKind != CollectorKind.None)
+                {
+                    <div class="small text-muted">по расписанию не собирается</div>
+                }
+            </td>
+            <td class="small">@Labels.Of(r.CollectorKind)</td>
+            <td class="small">
+                @if (r.LastCollectedAt != null)
+                {
+                    <div>@Msk.Format(r.LastCollectedAt)</div>
+                    <div class="@(r.LastCollectFailed ? "text-danger" : "text-muted")">@r.LastCollectMessage</div>
+                }
+                else if (r.CollectorKind == CollectorKind.None)
+                {
+                    <span class="text-muted">@r.Notes</span>
+                }
+                else
+                {
+                    <span class="text-muted">ещё не проверялся</span>
+                }
+            </td>
+            <td class="text-end">
+                @if (r.CollectorKind != CollectorKind.None)
+                {
+                    <div class="d-flex gap-2 justify-content-end">
+                        <button class="btn btn-sm btn-primary" disabled="@busy" @onclick="() => RunAsync(r, null)">Проверить сейчас</button>
+                        @if (r.IsOwn && r.CollectorKind is CollectorKind.SudrfPress or CollectorKind.TelegramPublic or CollectorKind.VkWall)
+                        {
+                        <div class="input-group input-group-sm" style="width: 13rem">
+                            <input type="date" class="form-control" @bind="since[r.Id]" title="Загрузить архив с этой даты" />
+                            <button class="btn btn-outline-secondary" disabled="@(busy || since[r.Id] == null)" @onclick="() => RunAsync(r, since[r.Id])">Архив</button>
+                        </div>
+                        }
+                    </div>
+                }
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+}
+
+@if (busy)
+{
+    <div class="d-flex align-items-center gap-2 text-muted">
+        <div class="spinner-border spinner-border-sm"></div>
+        <span>Идёт сбор: @runningName. Загрузка архива может занять несколько минут.</span>
+    </div>
+}
+
+<div class="row g-4 mt-2">
+    <div class="col-lg-6">
+        <h2 class="h5">Ключевые фразы</h2>
+        <p class="small text-muted mb-2">
+            Публикация стороннего ресурса с такой фразой попадает в «Упоминания», даже если похожий наш материал не найден.
+            По одной фразе в строке; падежи учитываются автоматически («Четвертый кассационный суд» найдёт и «Четвертого кассационного суда»).
+        </p>
+        <textarea class="form-control mb-2" rows="7" @bind="keywords"></textarea>
+    </div>
+    <div class="col-lg-6">
+        <h2 class="h5">Источники перепечаток</h2>
+        <p class="small text-muted mb-2">
+            Если наша публикация ссылается на такой источник, она считается перепечаткой чужого материала
+            (например, новости Верховного Суда) и не участвует в поиске перепечаток у СМИ.
+            Домен или начало ссылки, по одному в строке.
+        </p>
+        <textarea class="form-control mb-2" rows="7" @bind="repostSources"></textarea>
+    </div>
+</div>
+<button class="btn btn-sm btn-primary" @onclick="SaveSettingsAsync">Сохранить настройки</button>
+@if (settingsSaved)
+{
+    <span class="small text-success ms-2">Сохранено</span>
+}
+
+@code {
+    private List<Resource> resources = [];
+    private Dictionary<int, DateTime?> since = [];
+    private bool busy, success;
+    private string? message, runningName, keywords, repostSources;
+    private bool settingsSaved;
+
+    protected override async Task OnInitializedAsync()
+    {
+        keywords = string.Join("\n", await Settings.GetKeywordsAsync());
+        repostSources = string.Join("\n", await Settings.GetRepostSourcesAsync());
+        await LoadAsync();
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        await Settings.SetKeywordsAsync((keywords ?? "").Split('\n'));
+        await Settings.SetRepostSourcesAsync((repostSources ?? "").Split('\n'));
+        settingsSaved = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        resources = await db.Resources.AsNoTracking()
+            .Where(r => r.IsOwn || r.CollectorKind != CollectorKind.None)
+            .OrderBy(r => r.Name).ToListAsync();
+        foreach (var r in resources) since.TryAdd(r.Id, null);
+    }
+
+    private async Task RunAsync(Resource r, DateTime? sinceMsk)
+    {
+        busy = true;
+        runningName = r.Name;
+        message = null;
+        StateHasChanged();
+        try
+        {
+            var result = await Collection.RunAsync(r.Id, sinceMsk is { } s ? Msk.ToUtcFromMsk(s.Date) : null, CancellationToken.None);
+            success = result.Success;
+            message = $"{r.Name}: {result.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+        await LoadAsync();
+    }
+}

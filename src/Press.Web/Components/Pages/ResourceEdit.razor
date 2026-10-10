@@ -1,0 +1,191 @@
+@page "/resources/new"
+@page "/resources/{Id:int}"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Nav
+
+<PageTitle>@(Id == null ? "Новый ресурс" : resource?.Name)</PageTitle>
+
+@if (resource == null)
+{
+    <p>Загрузка…</p>
+    return;
+}
+
+<div class="d-flex align-items-center mb-3 gap-2">
+    <a href="resources" class="btn btn-sm btn-outline-secondary">← К списку</a>
+    <h1 class="h4 mb-0 me-auto">@(Id == null ? "Новый ресурс" : resource.Name)</h1>
+    @if (Id != null)
+    {
+        <button class="btn btn-sm btn-outline-danger" @onclick="DeleteAsync">@(confirmDelete ? "Точно удалить?" : "Удалить")</button>
+    }
+</div>
+
+@if (error != null)
+{
+    <div class="alert alert-danger py-2">@error</div>
+}
+
+<div class="card">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Название</label>
+                <input class="form-control" @bind="resource.Name" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Тип</label>
+                <select class="form-select" @bind="resource.Kind">
+                    @foreach (var k in Enum.GetValues<ResourceKind>())
+                    {
+                        <option value="@k">@Labels.Of(k)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3 pt-md-4">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="own" @bind="resource.IsOwn" />
+                    <label class="form-check-label" for="own">Собственный ресурс</label>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Адрес (для перехода)</label>
+                <input class="form-control" @bind="resource.HomeUrl" placeholder="https://…" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Префикс ссылок</label>
+                <input class="form-control" @bind="resource.UrlPrefix" placeholder="например: rg.ru  или  t.me/channel/" />
+                <div class="form-text">По нему ссылки автоматически относятся к этому ресурсу. Для сайта — домен, для канала — t.me/имя/.</div>
+            </div>
+            <div class="col-12">
+                <label class="form-label">Примечание</label>
+                <textarea class="form-control" rows="2" @bind="resource.Notes"></textarea>
+            </div>
+        </div>
+
+        <hr />
+        <h2 class="h6">@(resource.IsOwn ? "Автоматический сбор публикаций" : "Мониторинг ресурса")</h2>
+        @if (!resource.IsOwn)
+        {
+            <p class="small text-muted">
+                Новые публикации ресурса сравниваются с нашими материалами; похожие и упоминающие суд
+                попадают на страницу «Проверка».
+            </p>
+        }
+        <div class="row g-3">
+            <div class="col-md-5">
+                <label class="form-label">Способ</label>
+                <select class="form-select" @bind="resource.CollectorKind">
+                    @foreach (var k in Enum.GetValues<CollectorKind>())
+                    {
+                        <option value="@k">@Labels.Of(k)</option>
+                    }
+                </select>
+            </div>
+            @if (resource.CollectorKind != CollectorKind.None)
+            {
+                <div class="col-md-7">
+                    <label class="form-label">Источник</label>
+                    <input class="form-control" @bind="resource.CollectorTarget" />
+                    <div class="form-text">@Labels.CollectorTargetHint(resource.CollectorKind)</div>
+                </div>
+                @if (resource.CollectorKind == CollectorKind.HtmlList)
+                {
+                    <div class="col-md-7">
+                        <label class="form-label">CSS-селектор ссылок</label>
+                        <input class="form-control" @bind="resource.CollectorSelector" placeholder="a[href*='/news/']" />
+                        <div class="form-text">Какие ссылки на странице считать публикациями. Пусто — все ссылки на страницы этого сайта.</div>
+                    </div>
+                }
+                <div class="col-md-3">
+                    <label class="form-label">Интервал, мин</label>
+                    <input type="number" min="5" class="form-control" @bind="resource.CollectIntervalMinutes" />
+                </div>
+                @if (resource.IsOwn)
+                {
+                    <div class="col-md-5">
+                        <label class="form-label">Вид новых материалов по умолчанию</label>
+                        <select class="form-select" @bind="resource.DefaultMaterialTypeId">
+                            <option value="">не задан</option>
+                            @foreach (var t in types)
+                            {
+                                <option value="@t.Id">@t.Name</option>
+                            }
+                        </select>
+                    </div>
+                }
+                else if (resource.CollectorKind is CollectorKind.Rss or CollectorKind.HtmlList)
+                {
+                    <div class="col-md-5 pt-md-4">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="full" @bind="resource.FetchFullText" />
+                            <label class="form-check-label" for="full">Загружать полный текст каждой публикации</label>
+                        </div>
+                        <div class="form-text">Для небольших региональных изданий. Иначе полный текст загружается только для публикаций, отобранных по заголовку и анонсу.</div>
+                    </div>
+                }
+                <div class="col-md-4 pt-md-4">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="en" @bind="resource.IsCollectorEnabled" />
+                        <label class="form-check-label" for="en">Проверять по расписанию</label>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="mt-3">
+            <button class="btn btn-primary" @onclick="SaveAsync">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private Resource? resource;
+    private List<MaterialType> types = [];
+    private string? error;
+    private bool confirmDelete;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        types = await db.MaterialTypes.AsNoTracking().OrderBy(t => t.SortOrder).ToListAsync();
+        resource = Id == null
+            ? new Resource { Kind = ResourceKind.Website }
+            : await db.Resources.AsNoTracking().FirstOrDefaultAsync(r => r.Id == Id);
+        if (resource == null) Nav.NavigateTo("resources");
+    }
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(resource!.Name))
+        {
+            error = "Укажите название";
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(resource.UrlPrefix) && ResourceResolver.NormalizePrefix(resource.UrlPrefix) == null)
+        {
+            error = "Некорректный префикс ссылок";
+            return;
+        }
+        resource.CollectIntervalMinutes = Math.Max(5, resource.CollectIntervalMinutes);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (Id == null) db.Resources.Add(resource);
+        else db.Resources.Update(resource);
+        await db.SaveChangesAsync();
+        Nav.NavigateTo("resources");
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (!confirmDelete)
+        {
+            confirmDelete = true;
+            return;
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Resources.Where(r => r.Id == Id).ExecuteDeleteAsync();
+        Nav.NavigateTo("resources");
+    }
+}

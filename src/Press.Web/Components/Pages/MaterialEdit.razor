@@ -1,0 +1,421 @@
+@page "/materials/new"
+@page "/materials/{Id:int}"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject MaterialService Materials
+@inject NavigationManager Nav
+
+<PageTitle>@(IsNew ? "Новый материал" : $"Материал №{Id}")</PageTitle>
+
+@if (material == null)
+{
+    <p>@(notFound ? "Материал не найден." : "Загрузка…")</p>
+    return;
+}
+
+<div class="d-flex align-items-center mb-3 gap-2">
+    <a href="materials" class="btn btn-sm btn-outline-secondary">← К списку</a>
+    <h1 class="h4 mb-0 me-auto">
+        @(IsNew ? "Новый материал" : $"Материал №{Id}")
+        @if (!IsNew)
+        {
+            <span class="badge @(material.IsOwn ? "bg-success" : "bg-secondary") align-middle ms-2 fs-6">@(material.IsOwn ? "собственный" : "сторонний")</span>
+        }
+    </h1>
+    @if (!IsNew)
+    {
+        <button class="btn btn-sm btn-outline-danger" @onclick="DeleteAsync">@(confirmDelete ? "Точно удалить?" : "Удалить")</button>
+    }
+</div>
+
+@if (error != null)
+{
+    <div class="alert alert-danger py-2">@error</div>
+}
+@if (info != null)
+{
+    <div class="alert alert-success py-2">@info</div>
+}
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label">Заголовок</label>
+                <textarea class="form-control" rows="2" @bind="material.Title"></textarea>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Дата публикации (МСК)</label>
+                <input type="datetime-local" class="form-control" @bind="publishedMsk" />
+            </div>
+            <div class="col-md-4 pt-md-4">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="own" @bind="material.IsOwn" />
+                    <label class="form-check-label" for="own">Собственный материал пресс-службы</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="rep" @bind="material.IsRepost" />
+                    <label class="form-check-label" for="rep">Перепечатка чужого материала</label>
+                </div>
+            </div>
+            <div class="col-12">
+                <label class="form-label">Вид материала</label>
+                <div>
+                    @foreach (var t in allTypes)
+                    {
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="checkbox" id="t@(t.Id)" checked="@selectedTypes.Contains(t.Id)"
+                                   @onchange="e => ToggleType(t.Id, (bool)e.Value!)" />
+                            <label class="form-check-label" for="t@(t.Id)">@t.Name</label>
+                        </div>
+                    }
+                </div>
+            </div>
+            <div class="col-12">
+                <label class="form-label">Примечание</label>
+                <textarea class="form-control" rows="2" @bind="material.Notes"></textarea>
+            </div>
+            @if (IsNew)
+            {
+                <div class="col-12">
+                    <label class="form-label">Первая ссылка (необязательно)</label>
+                    <LinkAdder HideSubmit="true" ValueChanged="FirstLinkChanged" />
+                </div>
+            }
+        </div>
+        <div class="mt-3">
+            <button class="btn btn-primary" @onclick="SaveAsync">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+@if (!IsNew)
+{
+    <div class="card mb-3">
+        <div class="card-header fw-semibold">Публикации материала (@material.Links.Count)</div>
+        <div class="card-body">
+            @if (material.Links.Count > 0)
+            {
+                <table class="table table-sm align-middle">
+                    <tbody>
+                    @foreach (var l in material.Links.OrderBy(l => l.PublishedAt))
+                    {
+                        <tr>
+                            <td style="width: 9rem"><LinkBadge Url="@l.Url" Kind="l.Resource?.Kind" ResourceName="@l.Resource?.Name" Short="false" /></td>
+                            <td>
+                                <a href="@l.Url" target="_blank" rel="noopener" class="small text-break">@l.Url</a>
+                                @if (!string.IsNullOrEmpty(l.Title) && l.Title != material.Title)
+                                {
+                                    <div class="small text-muted">@l.Title</div>
+                                }
+                                @if (!string.IsNullOrEmpty(l.Text))
+                                {
+                                    <details class="small">
+                                        <summary class="text-muted">Текст (@l.Text.Length зн.)</summary>
+                                        <div class="text-pre border rounded p-2 mt-1 bg-light">@l.Text</div>
+                                    </details>
+                                }
+                            </td>
+                            <td class="small text-nowrap" style="width: 8rem">@Msk.Format(l.PublishedAt)</td>
+                            <td class="small text-muted" style="width: 6rem">@(l.IsAutoCollected ? "авто" : "вручную")</td>
+                            <td style="width: 3rem">
+                                <button class="btn btn-sm btn-link text-danger p-0" title="Удалить ссылку" @onclick="() => RemoveLinkAsync(l.Id)">✕</button>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+            <div class="small text-muted mb-1">Добавить ещё одну публикацию этого материала (например, пост в MAX):</div>
+            <LinkAdder OnSubmit="AddLinkAsync" />
+        </div>
+    </div>
+
+    @if (material.IsOwn)
+    {
+        <div class="card mb-3">
+            <div class="card-header fw-semibold">
+                Материалы других ресурсов на основе этого
+                (@material.Derived.Count(r => r.Status == RelationStatus.Confirmed))
+            </div>
+            <div class="card-body">
+                @if (material.Derived.Count > 0)
+                {
+                    <table class="table table-sm align-middle">
+                        <tbody>
+                        @foreach (var r in material.Derived.OrderBy(r => r.Status).ThenBy(r => r.DerivedMaterial.PublishedAt))
+                        {
+                            var d = r.DerivedMaterial;
+                            var link = d.Links.OrderBy(l => l.PublishedAt).FirstOrDefault();
+                            <tr class="@(r.Status == RelationStatus.Rejected ? "text-decoration-line-through text-muted" : "")">
+                                <td style="width: 10rem">
+                                    @if (link != null)
+                                    {
+                                        <LinkBadge Url="@link.Url" Kind="link.Resource?.Kind" ResourceName="@link.Resource?.Name" Short="false" />
+                                    }
+                                </td>
+                                <td>
+                                    <a href="materials/@d.Id">@d.Title</a>
+                                    @if (r.Score is { } s)
+                                    {
+                                        <span class="small text-muted ms-1">(похожесть @s.ToString("P0"))</span>
+                                    }
+                                </td>
+                                <td class="small text-nowrap" style="width: 7rem">@Msk.FormatDate(d.PublishedAt)</td>
+                                <td style="width: 15rem" class="text-end">
+                                    @if (r.Status != RelationStatus.Confirmed)
+                                    {
+                                        <button class="btn btn-sm btn-outline-success me-1" @onclick="() => SetStatusAsync(r.Id, RelationStatus.Confirmed)">Подтвердить</button>
+                                    }
+                                    @if (r.Status == RelationStatus.Candidate)
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary me-1" @onclick="() => SetStatusAsync(r.Id, RelationStatus.Rejected)">Отклонить</button>
+                                    }
+                                    <button class="btn btn-sm btn-link text-danger p-0" title="Удалить связь" @onclick="() => RemoveRelationAsync(r.Id)">✕</button>
+                                </td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+                @if (candidates.Count > 0)
+                {
+                    <div class="alert alert-warning py-2">
+                        <div class="fw-semibold mb-1">Найдено мониторингом, ждёт проверки (@candidates.Count)</div>
+                        @foreach (var c in candidates)
+                        {
+                            <div class="d-flex flex-wrap gap-2 align-items-center py-1 border-top">
+                                <LinkBadge Url="@c.Url" Kind="c.Resource.Kind" ResourceName="@c.Resource.Name" Short="false" />
+                                <a href="@c.Url" target="_blank" rel="noopener" class="me-auto">@(c.Title ?? c.Url)</a>
+                                <span class="small text-muted">@Msk.FormatDate(c.PublishedAt) · похожесть @(c.Score?.ToString("P0"))</span>
+                                <button class="btn btn-sm btn-success" @onclick="() => ConfirmCandidateAsync(c.Id)">Подтвердить</button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => DismissCandidateAsync(c.Id)">Отклонить</button>
+                            </div>
+                        }
+                    </div>
+                }
+                <div class="small text-muted mb-1">Добавить материал другого ресурса, сделанный на основе этого:</div>
+                <LinkAdder OnSubmit="AddDerivedAsync" SubmitText="Добавить перепечатку" />
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="card mb-3">
+            <div class="card-header fw-semibold">Сделан на основе собственных материалов</div>
+            <div class="card-body">
+                <ul class="mb-2">
+                    @foreach (var r in material.Sources)
+                    {
+                        <li>
+                            <a href="materials/@r.SourceMaterialId">@r.SourceMaterial.Title</a>
+                            <span class="small text-muted">— @Labels.Of(r.Status)</span>
+                        </li>
+                    }
+                </ul>
+                <div class="input-group input-group-sm" style="max-width: 28rem">
+                    <span class="input-group-text">Привязать к материалу №</span>
+                    <input class="form-control" type="number" @bind="linkToSourceId" />
+                    <button class="btn btn-outline-primary" @onclick="LinkToSourceAsync">Привязать</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="card mb-3">
+        <div class="card-header fw-semibold">Объединить</div>
+        <div class="card-body">
+            <p class="small text-muted mb-2">
+                Если один и тот же материал попал в базу дважды (например, пост в Telegram без ссылки на сайт),
+                укажите номер второго материала — его ссылки, виды и связи перейдут сюда, а он будет удалён.
+            </p>
+            <div class="input-group input-group-sm" style="max-width: 28rem">
+                <span class="input-group-text">Материал №</span>
+                <input class="form-control" type="number" @bind="mergeId" />
+                <button class="btn btn-outline-primary" @onclick="MergeAsync">Объединить с этим</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private bool IsNew => Id == null;
+    private Material? material;
+    private bool notFound, confirmDelete;
+    private DateTime publishedMsk;
+    private List<MaterialType> allTypes = [];
+    private HashSet<int> selectedTypes = [];
+    private LinkInput? firstLink;
+    private int? mergeId, linkToSourceId;
+    private List<MonitoredItem> candidates = [];
+    private string? error, info;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        error = info = null;
+        confirmDelete = false;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        allTypes = await db.MaterialTypes.AsNoTracking().OrderBy(t => t.SortOrder).ThenBy(t => t.Name).ToListAsync();
+        if (IsNew)
+        {
+            material = new Material { IsOwn = true, PublishedAt = DateTime.UtcNow };
+            selectedTypes = [];
+        }
+        else
+        {
+            material = await db.Materials.AsNoTracking().AsSplitQuery()
+                .Include(m => m.Types)
+                .Include(m => m.Links).ThenInclude(l => l.Resource)
+                .Include(m => m.Derived).ThenInclude(r => r.DerivedMaterial).ThenInclude(d => d.Links).ThenInclude(l => l.Resource)
+                .Include(m => m.Sources).ThenInclude(r => r.SourceMaterial)
+                .FirstOrDefaultAsync(m => m.Id == Id);
+            notFound = material == null;
+            if (material == null) return;
+            selectedTypes = material.Types.Select(t => t.Id).ToHashSet();
+            candidates = await db.MonitoredItems.AsNoTracking().Include(i => i.Resource)
+                .Where(i => i.SuggestedMaterialId == Id && i.Status == MonitoredItemStatus.Candidate)
+                .OrderByDescending(i => i.Score).ToListAsync();
+        }
+        publishedMsk = material.PublishedAt.ToMsk();
+    }
+
+    private void ToggleType(int id, bool on)
+    {
+        if (on) selectedTypes.Add(id);
+        else selectedTypes.Remove(id);
+    }
+
+    private void FirstLinkChanged(LinkInput? input)
+    {
+        firstLink = input;
+        if (input == null) return;
+        // подставляем данные ссылки, пока пользователь не заполнил поля сам
+        if (string.IsNullOrWhiteSpace(material!.Title) && !string.IsNullOrWhiteSpace(input.Title)) material.Title = input.Title;
+        if (input.PublishedAt is { } p) publishedMsk = p.ToMsk();
+    }
+
+    private async Task SaveAsync()
+    {
+        error = info = null;
+        if (string.IsNullOrWhiteSpace(material!.Title))
+        {
+            error = "Укажите заголовок";
+            return;
+        }
+        material.Title = material.Title.Trim();
+        material.PublishedAt = Msk.ToUtcFromMsk(publishedMsk);
+        if (IsNew)
+        {
+            material.TitleIsManual = true;
+            var (id, err) = await Materials.CreateAsync(material, selectedTypes, firstLink);
+            if (err != null)
+            {
+                error = err;
+                return;
+            }
+            Nav.NavigateTo($"materials/{id}");
+        }
+        else
+        {
+            await Materials.UpdateAsync(material, selectedTypes);
+            await LoadAsync();
+            info = "Сохранено";
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (!confirmDelete)
+        {
+            confirmDelete = true;
+            return;
+        }
+        await Materials.DeleteAsync(Id!.Value);
+        Nav.NavigateTo("materials");
+    }
+
+    private async Task<string?> AddLinkAsync(LinkInput input)
+    {
+        var err = await Materials.AddLinkAsync(Id!.Value, input);
+        if (err == null) await LoadAsync();
+        return err;
+    }
+
+    private async Task RemoveLinkAsync(int linkId)
+    {
+        await Materials.RemoveLinkAsync(linkId);
+        await LoadAsync();
+    }
+
+    private async Task<string?> AddDerivedAsync(LinkInput input)
+    {
+        var err = await Materials.AddDerivedAsync(Id!.Value, input, [], await UserNameAsync());
+        if (err == null) await LoadAsync();
+        return err;
+    }
+
+    private async Task ConfirmCandidateAsync(int itemId)
+    {
+        error = await Materials.ConfirmMonitoredAsync(itemId, Id!.Value, [], await UserNameAsync());
+        await LoadAsync();
+    }
+
+    private async Task DismissCandidateAsync(int itemId)
+    {
+        await Materials.SetMonitoredStatusAsync(itemId, MonitoredItemStatus.Dismissed, await UserNameAsync());
+        await LoadAsync();
+    }
+
+    private async Task SetStatusAsync(int relationId, RelationStatus status)
+    {
+        await Materials.SetRelationStatusAsync(relationId, status, await UserNameAsync());
+        await LoadAsync();
+    }
+
+    private async Task RemoveRelationAsync(int relationId)
+    {
+        await Materials.RemoveRelationAsync(relationId);
+        await LoadAsync();
+        if (material == null) Nav.NavigateTo("materials"); // сторонний материал удалён вместе с последней связью
+    }
+
+    private async Task LinkToSourceAsync()
+    {
+        error = info = null;
+        if (linkToSourceId is not { } sid) return;
+        var link = material!.Links.FirstOrDefault();
+        if (link == null)
+        {
+            error = "У материала нет ссылок";
+            return;
+        }
+        error = await Materials.AddDerivedAsync(sid, new LinkInput(link.Url, null, null, null), [], await UserNameAsync());
+        if (error == null)
+        {
+            linkToSourceId = null;
+            await LoadAsync();
+        }
+    }
+
+    private async Task MergeAsync()
+    {
+        error = info = null;
+        if (mergeId is not { } other) return;
+        error = await Materials.MergeAsync(Id!.Value, other);
+        if (error == null)
+        {
+            info = $"Материал №{other} объединён с этим";
+            mergeId = null;
+            await LoadAsync();
+        }
+    }
+
+    private async Task<string?> UserNameAsync() => (await AuthState).User.Identity?.Name;
+}

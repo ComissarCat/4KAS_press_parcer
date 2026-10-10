@@ -1,0 +1,77 @@
+@page "/resources"
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Ресурсы</PageTitle>
+
+<div class="d-flex align-items-center mb-3">
+    <h1 class="h3 mb-0 me-auto">Ресурсы</h1>
+    <a class="btn btn-primary" href="resources/new">Добавить ресурс</a>
+</div>
+<p class="text-muted small">
+    Собственные площадки пресс-службы и сторонние ресурсы (СМИ, каналы), где выходят материалы на основе ваших.
+    Сторонние ресурсы создаются автоматически при добавлении ссылки с нового сайта;
+    чтобы приложение само искало на ресурсе публикации на основе ваших материалов, настройте у него мониторинг.
+</p>
+
+@foreach (var group in resources.GroupBy(r => r.IsOwn).OrderByDescending(g => g.Key))
+{
+    <h2 class="h5 mt-4">@(group.Key ? "Собственные" : "Сторонние")</h2>
+    <table class="table table-sm table-hover align-middle">
+        <thead>
+        <tr>
+            <th>Название</th>
+            <th style="width: 8rem">Тип</th>
+            <th>Адрес</th>
+            <th style="width: 7rem" class="text-end">Публикаций</th>
+            <th style="width: 14rem">@(group.Key ? "Автосбор" : "Мониторинг")</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var r in group)
+        {
+            <tr>
+                <td><a href="resources/@r.Id">@r.Name</a></td>
+                <td class="small">@Labels.Of(r.Kind)</td>
+                <td class="small text-break">
+                    @if (!string.IsNullOrEmpty(r.HomeUrl))
+                    {
+                        <a href="@r.HomeUrl" target="_blank" rel="noopener">@r.HomeUrl</a>
+                    }
+                </td>
+                <td class="text-end">@counts.GetValueOrDefault(r.Id)</td>
+                <td class="small">
+                    @if (r.CollectorKind == CollectorKind.None)
+                    {
+                        <span class="text-muted">нет</span>
+                    }
+                    else if (!r.IsCollectorEnabled)
+                    {
+                        <span class="text-muted">выключен</span>
+                    }
+                    else
+                    {
+                        <span class="@(r.LastCollectFailed ? "text-danger" : "text-success")">
+                            каждые @r.CollectIntervalMinutes мин
+                        </span>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Resource> resources = [];
+    private Dictionary<int, int> counts = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        resources = await db.Resources.AsNoTracking().OrderBy(r => r.Name).ToListAsync();
+        counts = await db.MaterialLinks.Where(l => l.ResourceId != null)
+            .GroupBy(l => l.ResourceId!.Value)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
+    }
+}

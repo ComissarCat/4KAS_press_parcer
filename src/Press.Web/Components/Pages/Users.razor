@@ -1,0 +1,96 @@
+@page "/users"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject UserService UserService
+
+<PageTitle>Пользователи</PageTitle>
+
+<h1 class="h3 mb-3">Пользователи</h1>
+
+@if (error != null)
+{
+    <div class="alert alert-danger py-2">@error</div>
+}
+@if (info != null)
+{
+    <div class="alert alert-success py-2">@info</div>
+}
+
+<table class="table table-sm align-middle" style="max-width: 56rem">
+    <thead>
+    <tr>
+        <th>Логин</th>
+        <th>Имя</th>
+        <th style="width: 18rem">Новый пароль</th>
+        <th style="width: 9rem"></th>
+    </tr>
+    </thead>
+    <tbody>
+    @foreach (var u in users)
+    {
+        <tr class="@(u.IsActive ? "" : "text-muted")">
+            <td>@u.Login</td>
+            <td>@u.DisplayName</td>
+            <td>
+                <div class="input-group input-group-sm">
+                    <input type="password" class="form-control" @bind="passwords[u.Id]" autocomplete="new-password" />
+                    <button class="btn btn-outline-primary" @onclick="() => SetPasswordAsync(u.Id)">Сменить</button>
+                </div>
+            </td>
+            <td class="text-end">
+                <button class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleAsync(u)">@(u.IsActive ? "Отключить" : "Включить")</button>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<h2 class="h5 mt-4">Новый пользователь</h2>
+<div class="row g-2" style="max-width: 56rem">
+    <div class="col-md-3"><input class="form-control form-control-sm" placeholder="Логин" @bind="newLogin" /></div>
+    <div class="col-md-4"><input class="form-control form-control-sm" placeholder="Имя (для журнала)" @bind="newName" /></div>
+    <div class="col-md-3"><input type="password" class="form-control form-control-sm" placeholder="Пароль" @bind="newPassword" autocomplete="new-password" /></div>
+    <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" @onclick="CreateAsync">Добавить</button></div>
+</div>
+
+@code {
+    private List<AppUser> users = [];
+    private Dictionary<int, string?> passwords = [];
+    private string? newLogin, newName, newPassword, error, info;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        users = await db.Users.AsNoTracking().OrderBy(u => u.Login).ToListAsync();
+        passwords = users.ToDictionary(u => u.Id, _ => (string?)null);
+    }
+
+    private async Task SetPasswordAsync(int id)
+    {
+        error = info = null;
+        error = await UserService.SetPasswordAsync(id, passwords[id] ?? "");
+        if (error == null)
+        {
+            info = "Пароль изменён";
+            passwords[id] = null;
+        }
+    }
+
+    private async Task ToggleAsync(AppUser u)
+    {
+        error = info = null;
+        error = await UserService.SetActiveAsync(u.Id, !u.IsActive);
+        await LoadAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        error = info = null;
+        error = await UserService.CreateAsync(newLogin ?? "", newName ?? "", newPassword ?? "");
+        if (error != null) return;
+        info = $"Пользователь «{newLogin}» добавлен";
+        newLogin = newName = newPassword = null;
+        await LoadAsync();
+    }
+}

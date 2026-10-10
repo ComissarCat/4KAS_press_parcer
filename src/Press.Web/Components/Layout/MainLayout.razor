@@ -1,0 +1,29 @@
+@inherits LayoutComponentBase
+
+<div class="page">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
+
+    <main>
+        <div class="top-row px-4">
+            <AuthorizeView>
+                <span class="text-muted me-3">@context.User.Identity?.Name</span>
+                <form method="post" action="account/logout" class="d-inline">
+                    <AntiforgeryToken />
+                    <button type="submit" class="btn btn-link p-0">Выйти</button>
+                </form>
+            </AuthorizeView>
+        </div>
+
+        <article class="content px-4 pb-5">
+            @Body
+        </article>
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    Произошла ошибка.
+    <a href="." class="reload">Перезагрузить</a>
+    <span class="dismiss">🗙</span>
+</div>

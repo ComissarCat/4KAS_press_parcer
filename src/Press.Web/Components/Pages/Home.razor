@@ -1,0 +1,77 @@
+@page "/"
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Пресс-мониторинг</PageTitle>
+
+<h1 class="h3 mb-3">Сводка</h1>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card text-center"><div class="card-body">
+            <div class="display-6">@ownMonth</div>
+            <div class="small text-muted">собственных материалов в этом месяце</div>
+        </div></div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center"><div class="card-body">
+            <div class="display-6">@derivedMonth</div>
+            <div class="small text-muted">перепечаток добавлено в этом месяце</div>
+        </div></div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center"><div class="card-body">
+            <div class="display-6">@singleLink</div>
+            <div class="small text-muted">
+                <a href="materials?single=true&norep=true">материалов опубликовано только на одном ресурсе</a> за 30 дней
+            </div>
+        </div></div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center"><div class="card-body">
+            <div class="display-6 @(failed > 0 ? "text-danger" : "")">@failed</div>
+            <div class="small text-muted"><a href="collect">сборщиков с ошибкой</a></div>
+        </div></div>
+    </div>
+</div>
+
+<h2 class="h5">Последние собственные материалы</h2>
+<table class="table table-sm align-middle">
+    <tbody>
+    @foreach (var m in recent)
+    {
+        <tr>
+            <td class="small text-nowrap" style="width: 8rem">@Msk.Format(m.PublishedAt)</td>
+            <td><a href="materials/@m.Id">@m.Title</a></td>
+            <td style="width: 16rem">
+                @foreach (var l in m.Links)
+                {
+                    <LinkBadge Url="@l.Url" Kind="l.Resource?.Kind" ResourceName="@l.Resource?.Name" />
+                }
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+<a href="materials">Все материалы →</a>
+
+@code {
+    private int ownMonth, derivedMonth, singleLink, failed;
+    private List<Material> recent = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var monthStart = Msk.ToUtcFromMsk(new DateTime(Msk.Now.Year, Msk.Now.Month, 1));
+        var since30 = DateTime.UtcNow.AddDays(-30);
+        ownMonth = await db.Materials.CountAsync(m => m.IsOwn && m.PublishedAt >= monthStart);
+        derivedMonth = await db.MaterialRelations.CountAsync(r => r.Status == RelationStatus.Confirmed && r.CreatedAt >= monthStart);
+        singleLink = await db.Materials.CountAsync(m => m.IsOwn && !m.IsRepost && m.PublishedAt >= since30 && m.Links.Count == 1);
+        failed = await db.Resources.CountAsync(r => r.IsOwn && r.IsCollectorEnabled && r.LastCollectFailed);
+        recent = await db.Materials.AsNoTracking()
+            .Where(m => m.IsOwn)
+            .Include(m => m.Links).ThenInclude(l => l.Resource)
+            .OrderByDescending(m => m.PublishedAt)
+            .Take(15)
+            .ToListAsync();
+    }
+}

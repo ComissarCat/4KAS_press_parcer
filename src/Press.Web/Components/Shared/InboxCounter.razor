@@ -1,0 +1,41 @@
+@* Количество публикаций, ждущих проверки; обновляется при переходах между страницами *@
+@implements IDisposable
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Nav
+
+@if (count > 0)
+{
+    <span class="badge rounded-pill bg-warning text-dark ms-2">@count</span>
+}
+
+@code {
+    private int count;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Nav.LocationChanged += OnLocationChanged;
+        await LoadAsync();
+    }
+
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        try
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException)
+        {
+            // компонент уже уничтожен — счётчик не нужен
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        count = await db.MonitoredItems.CountAsync(i =>
+            i.Status == MonitoredItemStatus.Candidate || i.Status == MonitoredItemStatus.Mention);
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}

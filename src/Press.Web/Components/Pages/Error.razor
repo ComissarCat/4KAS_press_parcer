@@ -1,0 +1,22 @@
+@page "/Error"
+@attribute [AllowAnonymous]
+@using System.Diagnostics
+
+<PageTitle>Ошибка</PageTitle>
+
+<h1 class="text-danger">Ошибка</h1>
+<p>При обработке запроса произошла ошибка. Подробности — в журнале приложения.</p>
+@if (!string.IsNullOrEmpty(RequestId))
+{
+    <p><strong>Идентификатор запроса:</strong> <code>@RequestId</code></p>
+}
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

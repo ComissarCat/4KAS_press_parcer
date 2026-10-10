@@ -1,0 +1,10 @@
+* text=auto
+
+# Образцы реальных страниц для тестов храним байт-в-байт (в т.ч. windows-1251)
+tests/Press.Tests/Samples/** -text
+
+# Файлы для Linux-контейнеров — с LF, иначе в .env попадёт \r
+Dockerfile text eol=lf
+*.yml text eol=lf
+.env.example text eol=lf
+.dockerignore text eol=lf

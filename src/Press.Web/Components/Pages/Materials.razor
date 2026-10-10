@@ -1,0 +1,241 @@
+@page "/materials"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Nav
+
+<PageTitle>Материалы</PageTitle>
+
+<div class="d-flex align-items-center mb-3">
+    <h1 class="h3 mb-0 me-auto">Материалы</h1>
+    <a class="btn btn-primary" href="materials/new">Добавить материал</a>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body row g-2 align-items-end">
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Показывать</label>
+            <select class="form-select form-select-sm" @bind="scope" @bind:after="Apply">
+                <option value="own">Собственные</option>
+                <option value="derived">Сторонние (перепечатки)</option>
+                <option value="all">Все</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1">Поиск по заголовку</label>
+            <input class="form-control form-control-sm" @bind="q" @bind:after="Apply" placeholder="слово из заголовка" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">С даты</label>
+            <input type="date" class="form-control form-control-sm" @bind="from" @bind:after="Apply" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">По дату</label>
+            <input type="date" class="form-control form-control-sm" @bind="to" @bind:after="Apply" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1">Вид</label>
+            <select class="form-select form-select-sm" @bind="type" @bind:after="Apply">
+                <option value="0">Любой</option>
+                @foreach (var t in types)
+                {
+                    <option value="@t.Id">@t.Name</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1">Ресурс</label>
+            <select class="form-select form-select-sm" @bind="res" @bind:after="Apply">
+                <option value="0">Любой</option>
+                @foreach (var r in resources)
+                {
+                    <option value="@r.Id">@r.Name</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="norep" @bind="noReposts" @bind:after="Apply" />
+                <label class="form-check-label small" for="norep">Скрыть перепечатки чужих материалов</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="single" @bind="singleLink" @bind:after="Apply" />
+                <label class="form-check-label small" for="single">Только с одной ссылкой</label>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-sm btn-outline-secondary" @onclick="Reset">Сбросить фильтр</button>
+        </div>
+    </div>
+</div>
+
+@if (rows == null)
+{
+    <p>Загрузка…</p>
+}
+else
+{
+    <p class="text-muted small">Найдено: @total</p>
+    <table class="table table-sm table-hover align-middle">
+        <thead>
+        <tr>
+            <th style="width: 7rem">Дата</th>
+            <th>Заголовок</th>
+            <th style="width: 14rem">Где опубликован</th>
+            <th style="width: 7rem" class="text-center" title="Подтверждённые материалы других ресурсов / на проверке">Перепечатки</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var m in rows)
+        {
+            <tr>
+                <td class="small text-nowrap">@Msk.Format(m.PublishedAt)</td>
+                <td>
+                    <a href="materials/@m.Id">@m.Title</a>
+                    <div class="small">
+                        @if (!m.IsOwn)
+                        {
+                            <span class="badge bg-light text-dark border me-1">сторонний</span>
+                        }
+                        @if (m.IsRepost)
+                        {
+                            <span class="badge bg-warning text-dark me-1">перепечатка</span>
+                        }
+                        @foreach (var t in m.Types)
+                        {
+                            <span class="badge bg-light text-secondary border me-1">@t</span>
+                        }
+                    </div>
+                </td>
+                <td>
+                    @foreach (var l in m.Links)
+                    {
+                        <LinkBadge Url="@l.Url" Kind="l.Kind" ResourceName="@l.ResourceName" />
+                    }
+                </td>
+                <td class="text-center">
+                    @if (m.IsOwn)
+                    {
+                        <span>@m.Confirmed</span>
+                        @if (m.Candidates > 0)
+                        {
+                            <a href="materials/@m.Id" class="badge bg-warning text-dark ms-1 text-decoration-none" title="Найдено мониторингом, ждёт проверки">+@m.Candidates</a>
+                        }
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    @if (rows.Count < total)
+    {
+        <button class="btn btn-outline-secondary" @onclick="LoadMore">Показать ещё</button>
+    }
+}
+
+@code {
+    private const int PageSize = 50;
+
+    [SupplyParameterFromQuery(Name = "scope")] public string? QScope { get; set; }
+    [SupplyParameterFromQuery(Name = "q")] public string? QText { get; set; }
+    [SupplyParameterFromQuery(Name = "from")] public string? QFrom { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public string? QTo { get; set; }
+    [SupplyParameterFromQuery(Name = "type")] public int? QType { get; set; }
+    [SupplyParameterFromQuery(Name = "res")] public int? QRes { get; set; }
+    [SupplyParameterFromQuery(Name = "norep")] public bool? QNoReposts { get; set; }
+    [SupplyParameterFromQuery(Name = "single")] public bool? QSingle { get; set; }
+
+    private string scope = "own";
+    private string? q;
+    private DateTime? from, to;
+    private int type, res;
+    private bool noReposts, singleLink;
+
+    private List<MaterialType> types = [];
+    private List<Resource> resources = [];
+    private List<Row> rows = null!;
+    private int total;
+    private int shown = PageSize;
+
+    private sealed record LinkRow(string Url, ResourceKind? Kind, string? ResourceName);
+
+    private sealed record Row(int Id, string Title, DateTime PublishedAt, bool IsOwn, bool IsRepost,
+        List<string> Types, List<LinkRow> Links, int Confirmed, int Candidates);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        types = await db.MaterialTypes.OrderBy(t => t.SortOrder).ThenBy(t => t.Name).ToListAsync();
+        resources = await db.Resources.OrderByDescending(r => r.IsOwn).ThenBy(r => r.Name).ToListAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        scope = QScope is "derived" or "all" ? QScope : "own";
+        q = QText;
+        from = DateTime.TryParse(QFrom, out var f) ? f : null;
+        to = DateTime.TryParse(QTo, out var t) ? t : null;
+        type = QType ?? 0;
+        res = QRes ?? 0;
+        noReposts = QNoReposts ?? false;
+        singleLink = QSingle ?? false;
+        shown = PageSize;
+        await LoadAsync();
+    }
+
+    private void Apply() =>
+        Nav.NavigateTo(Nav.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["scope"] = scope == "own" ? null : scope,
+            ["q"] = string.IsNullOrWhiteSpace(q) ? null : q.Trim(),
+            ["from"] = from?.ToString("yyyy-MM-dd"),
+            ["to"] = to?.ToString("yyyy-MM-dd"),
+            ["type"] = type == 0 ? null : type,
+            ["res"] = res == 0 ? null : res,
+            ["norep"] = noReposts ? true : null,
+            ["single"] = singleLink ? true : null,
+        }));
+
+    private void Reset() => Nav.NavigateTo("materials");
+
+    private async Task LoadMore()
+    {
+        shown += PageSize;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var query = db.Materials.AsNoTracking();
+        query = scope switch
+        {
+            "own" => query.Where(m => m.IsOwn),
+            "derived" => query.Where(m => !m.IsOwn),
+            _ => query,
+        };
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var key = SearchText.Normalize(q.Trim());
+            query = query.Where(m => m.SearchKey.Contains(key));
+        }
+        if (from is { } f) query = query.Where(m => m.PublishedAt >= Msk.ToUtcFromMsk(f.Date));
+        if (to is { } t) query = query.Where(m => m.PublishedAt < Msk.ToUtcFromMsk(t.Date.AddDays(1)));
+        if (type != 0) query = query.Where(m => m.Types.Any(x => x.Id == type));
+        if (res != 0) query = query.Where(m => m.Links.Any(l => l.ResourceId == res));
+        if (noReposts) query = query.Where(m => !m.IsRepost);
+        if (singleLink) query = query.Where(m => m.Links.Count == 1);
+
+        total = await query.CountAsync();
+        rows = await query
+            .OrderByDescending(m => m.PublishedAt)
+            .Take(shown)
+            .Select(m => new Row(
+                m.Id, m.Title, m.PublishedAt, m.IsOwn, m.IsRepost,
+                m.Types.OrderBy(x => x.SortOrder).Select(x => x.Name).ToList(),
+                m.Links.OrderBy(l => l.PublishedAt)
+                    .Select(l => new LinkRow(l.Url, l.Resource == null ? null : l.Resource.Kind, l.Resource == null ? null : l.Resource.Name))
+                    .ToList(),
+                m.Derived.Count(r => r.Status == RelationStatus.Confirmed),
+                db.MonitoredItems.Count(i => i.SuggestedMaterialId == m.Id && i.Status == MonitoredItemStatus.Candidate)))
+            .ToListAsync();
+    }
+}

@@ -1,0 +1,40 @@
+# Запуск: скопируйте .env.example в .env, задайте пароли и выполните  docker compose up -d --build
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: press
+      POSTGRES_USER: press
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD в файле .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U press -d press"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # порт доступен только с самого сервера — для резервного копирования и разработки
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+  app:
+    build: .
+    image: press-monitoring:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__Default: "Host=db;Port=5432;Database=press;Username=press;Password=${POSTGRES_PASSWORD}"
+      Auth__InitialAdmin__Login: ${ADMIN_LOGIN:-admin}
+      Auth__InitialAdmin__Password: ${ADMIN_PASSWORD:-admin123}
+      Vk__ServiceToken: ${VK_SERVICE_TOKEN:-}
+      Http__Proxy__Url: ${PROXY_URL:-}
+      Http__Proxy__UserName: ${PROXY_USER:-}
+      Http__Proxy__Password: ${PROXY_PASSWORD:-}
+    ports:
+      - "${APP_PORT:-5080}:8080"
+
+volumes:
+  pgdata:

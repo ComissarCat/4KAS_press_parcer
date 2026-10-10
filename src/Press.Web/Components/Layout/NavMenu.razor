@@ -1,0 +1,36 @@
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">Пресс-мониторинг</a>
+    </div>
+</div>
+
+<input type="checkbox" title="Меню" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="nav flex-column">
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">Главная</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="materials">Материалы</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="inbox">Проверка <InboxCounter /></NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="reports">Отчёт</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="collect">Сбор</NavLink>
+        </div>
+        <div class="nav-item px-3 mt-3">
+            <NavLink class="nav-link" href="resources">Ресурсы</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="types">Виды материалов</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="users">Пользователи</NavLink>
+        </div>
+    </nav>
+</div>

@@ -1,0 +1,78 @@
+@page "/account/login"
+@layout EmptyLayout
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Authentication.Cookies
+@inject UserService Users
+@inject NavigationManager Nav
+
+<PageTitle>Вход</PageTitle>
+
+<div class="row justify-content-center">
+    <div class="col-sm-8 col-md-5 col-lg-4">
+        <h1 class="h4 mb-4 text-center">Мониторинг публикаций пресс-службы</h1>
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <EditForm Model="Input" FormName="login" OnValidSubmit="LoginAsync" method="post">
+                    <DataAnnotationsValidator />
+                    @if (error != null)
+                    {
+                        <div class="alert alert-danger py-2">@error</div>
+                    }
+                    <div class="mb-3">
+                        <label class="form-label" for="login">Логин</label>
+                        <InputText id="login" class="form-control" @bind-Value="Input.Login" autocomplete="username" autofocus />
+                        <ValidationMessage For="() => Input.Login" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="password">Пароль</label>
+                        <InputText id="password" type="password" class="form-control" @bind-Value="Input.Password" autocomplete="current-password" />
+                        <ValidationMessage For="() => Input.Password" />
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Войти</button>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private LoginInput Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private string? error;
+
+    protected override void OnInitialized() => Input ??= new();
+
+    private async Task LoginAsync()
+    {
+        var principal = await Users.ValidateAsync(Input.Login, Input.Password);
+        if (principal == null)
+        {
+            error = "Неверный логин или пароль";
+            return;
+        }
+        await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal,
+            new AuthenticationProperties { IsPersistent = true });
+        var target = string.IsNullOrEmpty(ReturnUrl) || !Uri.IsWellFormedUriString(ReturnUrl, UriKind.Relative) || ReturnUrl.StartsWith("//")
+            ? "/" : "/" + ReturnUrl.TrimStart('/');
+        Nav.NavigateTo(target);
+    }
+
+    private sealed class LoginInput
+    {
+        [Required(ErrorMessage = "Введите логин")]
+        public string Login { get; set; } = "";
+
+        [Required(ErrorMessage = "Введите пароль")]
+        public string Password { get; set; } = "";
+    }
+}

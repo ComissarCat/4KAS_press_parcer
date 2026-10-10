@@ -1,0 +1,29 @@
+@* Ссылка-«значок» на публикацию с названием площадки *@
+<a href="@Url" target="_blank" rel="noopener" class="badge text-decoration-none me-1 @CssClass" title="@Url">@Label</a>
+
+@code {
+    [Parameter, EditorRequired] public string Url { get; set; } = "";
+    [Parameter] public ResourceKind? Kind { get; set; }
+    [Parameter] public string? ResourceName { get; set; }
+    [Parameter] public bool Short { get; set; } = true;
+
+    private string Label => Short
+        ? Kind switch
+        {
+            ResourceKind.Telegram => "Telegram",
+            ResourceKind.Vk => "ВК",
+            ResourceKind.Max => "MAX",
+            ResourceKind.Website when ResourceName != null => ResourceName,
+            _ => ResourceName ?? UrlKey.Host(Url) ?? "ссылка",
+        }
+        : ResourceName ?? UrlKey.Host(Url) ?? Url;
+
+    private string CssClass => Kind switch
+    {
+        ResourceKind.Telegram => "bg-info text-dark",
+        ResourceKind.Vk => "bg-primary",
+        ResourceKind.Max => "bg-dark",
+        ResourceKind.Website => "bg-success",
+        _ => "bg-secondary",
+    };
+}

@@ -1,0 +1,109 @@
+@* Форма добавления ссылки: вставили адрес → «Загрузить» подтягивает заголовок и дату со страницы → «Добавить» *@
+@inject PageMetadataService Metadata
+
+<div class="row g-2 align-items-end">
+    <div class="col-md-6">
+        <label class="form-label small mb-1">Ссылка</label>
+        <div class="input-group input-group-sm">
+            <input class="form-control" @bind="url" @bind:event="oninput" @bind:after="Changed" placeholder="https://…" />
+            <button class="btn btn-outline-secondary" type="button" @onclick="LoadAsync" disabled="@(busy || string.IsNullOrWhiteSpace(url))">
+                @(busy ? "Загрузка…" : "Загрузить данные")
+            </button>
+        </div>
+    </div>
+    @if (!HideSubmit)
+    {
+        <div class="col-md-auto">
+            <button class="btn btn-sm btn-primary" type="button" @onclick="SubmitAsync" disabled="@(busy || string.IsNullOrWhiteSpace(url))">@SubmitText</button>
+        </div>
+    }
+    @if (expanded)
+    {
+        <div class="col-md-8">
+            <label class="form-label small mb-1">Заголовок публикации</label>
+            <input class="form-control form-control-sm" @bind="title" @bind:after="Changed" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1">Дата и время (МСК)</label>
+            <input type="datetime-local" class="form-control form-control-sm" @bind="publishedMsk" @bind:after="Changed" />
+        </div>
+    }
+    @if (message != null)
+    {
+        <div class="col-12"><div class="small @(isError ? "text-danger" : "text-muted")">@message</div></div>
+    }
+</div>
+
+@code {
+    /// <summary>Сохранение; возвращает текст ошибки или null.</summary>
+    [Parameter] public Func<LinkInput, Task<string?>>? OnSubmit { get; set; }
+    [Parameter] public string SubmitText { get; set; } = "Добавить";
+    /// <summary>Без собственной кнопки: родитель забирает данные через <see cref="ValueChanged"/>.</summary>
+    [Parameter] public bool HideSubmit { get; set; }
+    [Parameter] public EventCallback<LinkInput?> ValueChanged { get; set; }
+
+    private string? url, title, text, message;
+    private DateTime? publishedMsk;
+    private bool busy, expanded, isError;
+
+    private LinkInput? Current => string.IsNullOrWhiteSpace(url)
+        ? null
+        : new LinkInput(url.Trim(), title, publishedMsk is { } p ? Msk.ToUtcFromMsk(p) : null, text);
+
+    private async Task LoadAsync()
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        busy = true;
+        message = null;
+        try
+        {
+            var meta = await Metadata.FetchAsync(url.Trim().Contains("://") ? url.Trim() : "https://" + url.Trim(), CancellationToken.None);
+            title = meta.Title ?? title;
+            text = meta.Text;
+            publishedMsk = meta.PublishedAt?.ToMsk() ?? publishedMsk;
+            expanded = true;
+            isError = false;
+            message = meta.Title == null
+                ? "Не удалось получить данные со страницы — заполните заголовок и дату вручную."
+                : meta.PublishedAt == null ? "Дата публикации на странице не найдена — укажите её вручную." : null;
+        }
+        finally
+        {
+            busy = false;
+        }
+        await Changed();
+    }
+
+    private async Task Changed() => await ValueChanged.InvokeAsync(Current);
+
+    private async Task SubmitAsync()
+    {
+        if (OnSubmit == null || Current is not { } input) return;
+        busy = true;
+        try
+        {
+            if (!expanded && input.Title == null)
+            {
+                // данные не загружали — попробуем автоматически
+                busy = false;
+                await LoadAsync();
+                busy = true;
+                input = Current!;
+            }
+            var error = await OnSubmit(input);
+            if (error != null)
+            {
+                message = error;
+                isError = true;
+                return;
+            }
+            url = title = text = message = null;
+            publishedMsk = null;
+            expanded = false;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

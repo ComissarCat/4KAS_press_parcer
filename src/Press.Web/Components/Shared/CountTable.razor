@@ -1,0 +1,18 @@
+<div class="card h-100">
+    <div class="card-header small fw-semibold">@Title</div>
+    <ul class="list-group list-group-flush small">
+        @if (Rows.Count == 0)
+        {
+            <li class="list-group-item text-muted">нет данных</li>
+        }
+        @foreach (var r in Rows)
+        {
+            <li class="list-group-item d-flex justify-content-between"><span>@r.Name</span><span class="fw-semibold">@r.Count</span></li>
+        }
+    </ul>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter, EditorRequired] public IReadOnlyList<ReportCount> Rows { get; set; } = [];
+}

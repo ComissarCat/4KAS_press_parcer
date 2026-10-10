@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Press.Web/Press.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Press.Tests/Press.Tests.csproj" />
+  </Folder>
+</Solution>

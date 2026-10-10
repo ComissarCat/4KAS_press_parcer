@@ -1,0 +1,109 @@
+@page "/types"
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Виды материалов</PageTitle>
+
+<h1 class="h3 mb-3">Виды материалов</h1>
+
+@if (error != null)
+{
+    <div class="alert alert-danger py-2">@error</div>
+}
+
+<table class="table table-sm align-middle" style="max-width: 44rem">
+    <thead>
+    <tr>
+        <th>Название</th>
+        <th style="width: 7rem">Порядок</th>
+        <th style="width: 7rem" class="text-end">Материалов</th>
+        <th style="width: 10rem"></th>
+    </tr>
+    </thead>
+    <tbody>
+    @foreach (var t in types)
+    {
+        <tr>
+            <td><input class="form-control form-control-sm" @bind="t.Name" /></td>
+            <td><input type="number" class="form-control form-control-sm" @bind="t.SortOrder" /></td>
+            <td class="text-end">@counts.GetValueOrDefault(t.Id)</td>
+            <td class="text-end">
+                <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => SaveAsync(t)">Сохранить</button>
+                <button class="btn btn-sm btn-link text-danger p-0" title="Удалить" @onclick="() => DeleteAsync(t)">✕</button>
+            </td>
+        </tr>
+    }
+    <tr>
+        <td><input class="form-control form-control-sm" @bind="newName" placeholder="Новый вид" /></td>
+        <td></td>
+        <td></td>
+        <td class="text-end"><button class="btn btn-sm btn-primary" @onclick="AddAsync">Добавить</button></td>
+    </tr>
+    </tbody>
+</table>
+
+@code {
+    private List<MaterialType> types = [];
+    private Dictionary<int, int> counts = [];
+    private string? newName, error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        types = await db.MaterialTypes.AsNoTracking().OrderBy(t => t.SortOrder).ThenBy(t => t.Name).ToListAsync();
+        counts = await db.MaterialTypes.Select(t => new { t.Id, Count = t.Materials.Count })
+            .ToDictionaryAsync(x => x.Id, x => x.Count);
+    }
+
+    private async Task SaveAsync(MaterialType t)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(t.Name))
+        {
+            error = "Название не может быть пустым";
+            return;
+        }
+        t.Name = t.Name.Trim();
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (await db.MaterialTypes.AnyAsync(x => x.Name == t.Name && x.Id != t.Id))
+        {
+            error = $"Вид «{t.Name}» уже есть";
+            return;
+        }
+        db.MaterialTypes.Update(t);
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task AddAsync()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(newName)) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var name = newName.Trim();
+        if (await db.MaterialTypes.AnyAsync(x => x.Name == name))
+        {
+            error = $"Вид «{name}» уже есть";
+            return;
+        }
+        var order = (await db.MaterialTypes.MaxAsync(x => (int?)x.SortOrder) ?? 0) + 10;
+        db.MaterialTypes.Add(new MaterialType { Name = name, SortOrder = order });
+        await db.SaveChangesAsync();
+        newName = null;
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(MaterialType t)
+    {
+        error = null;
+        if (counts.GetValueOrDefault(t.Id) > 0)
+        {
+            error = $"Вид «{t.Name}» указан у материалов ({counts[t.Id]}) — сначала уберите его у них";
+            return;
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.MaterialTypes.Where(x => x.Id == t.Id).ExecuteDeleteAsync();
+        await LoadAsync();
+    }
+}

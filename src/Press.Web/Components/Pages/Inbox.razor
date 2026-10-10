@@ -1,0 +1,189 @@
+@page "/inbox"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject MaterialService Materials
+@inject NavigationManager Nav
+
+<PageTitle>Проверка</PageTitle>
+
+<h1 class="h3 mb-3">Проверка найденных публикаций</h1>
+
+<ul class="nav nav-tabs mb-3">
+    @foreach (var (s, label) in Tabs)
+    {
+        <li class="nav-item">
+            <a class="nav-link @(status == s ? "active" : "")" href="@($"inbox?status={(int)s}")">
+                @label <span class="badge bg-secondary">@counts.GetValueOrDefault(s)</span>
+            </a>
+        </li>
+    }
+</ul>
+
+<p class="text-muted small">
+    @(status switch
+    {
+        MonitoredItemStatus.Candidate => "Публикации других ресурсов, похожие на наши материалы. Подтвердите связь или отклоните.",
+        MonitoredItemStatus.Mention => "Публикации, где упоминается суд, но подходящий наш материал не найден автоматически. Если публикация сделана на основе нашего материала — укажите его номер.",
+        MonitoredItemStatus.Confirmed => "Последние подтверждённые публикации.",
+        _ => "Отклонённые публикации. Их можно вернуть в очередь.",
+    })
+</p>
+
+@if (error != null)
+{
+    <div class="alert alert-danger py-2">@error</div>
+}
+
+@if (items == null)
+{
+    <p>Загрузка…</p>
+}
+else if (items.Count == 0)
+{
+    <p class="text-muted">Здесь пусто.</p>
+}
+else
+{
+    @foreach (var i in items)
+    {
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="d-flex flex-wrap gap-2 align-items-baseline mb-1">
+                    <LinkBadge Url="@i.Url" Kind="i.Resource.Kind" ResourceName="@i.Resource.Name" Short="false" />
+                    <span class="small text-muted">@Msk.Format(i.PublishedAt ?? i.FoundAt)</span>
+                    @if (i.Score is { } sc)
+                    {
+                        <span class="badge @(sc >= 0.6 ? "bg-success" : sc >= 0.35 ? "bg-warning text-dark" : "bg-light text-dark border")">похожесть @sc.ToString("P0")</span>
+                    }
+                </div>
+                <h2 class="h6 mb-1"><a href="@i.Url" target="_blank" rel="noopener">@(i.Title ?? i.Url)</a></h2>
+                @if (Snippet(i) is { Length: > 0 } snippet)
+                {
+                    <details class="small mb-2">
+                        <summary class="text-muted">@Truncate(snippet, 220)</summary>
+                        <div class="text-pre border rounded p-2 mt-1 bg-light">@snippet</div>
+                    </details>
+                }
+                @if (!string.IsNullOrEmpty(i.MatchInfo))
+                {
+                    <div class="small text-muted mb-2">@i.MatchInfo</div>
+                }
+
+                @if (i.SuggestedMaterial is { } m)
+                {
+                    <div class="border-start border-3 border-success ps-2 mb-2 small">
+                        @(i.Status == MonitoredItemStatus.Confirmed ? "Сделано на основе:" : "Вероятно, на основе нашего материала:")
+                        <a href="materials/@m.Id">№@m.Id «@m.Title»</a>
+                        <span class="text-muted">от @Msk.FormatDate(m.PublishedAt)</span>
+                    </div>
+                }
+
+                @if (i.Status is MonitoredItemStatus.Candidate or MonitoredItemStatus.Mention)
+                {
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        @if (i.SuggestedMaterialId is { } sid)
+                        {
+                            <button class="btn btn-sm btn-success" disabled="@busy" @onclick="() => ConfirmAsync(i, sid)">Подтвердить</button>
+                        }
+                        <div class="input-group input-group-sm" style="width: 19rem">
+                            <span class="input-group-text">Наш материал №</span>
+                            <input class="form-control" type="number" @bind="otherIds[i.Id]" />
+                            <button class="btn btn-outline-primary" disabled="@(busy || otherIds.GetValueOrDefault(i.Id) == null)"
+                                    @onclick="() => ConfirmAsync(i, otherIds[i.Id]!.Value)">Привязать</button>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => SetStatusAsync(i, MonitoredItemStatus.Dismissed)">Отклонить</button>
+                    </div>
+                }
+                else if (i.Status == MonitoredItemStatus.Dismissed)
+                {
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => SetStatusAsync(i, i.SuggestedMaterialId != null && i.Score >= 0.35 ? MonitoredItemStatus.Candidate : MonitoredItemStatus.Mention)">Вернуть в очередь</button>
+                }
+                else if (i.ReviewedBy != null)
+                {
+                    <div class="small text-muted">Подтвердил: @i.ReviewedBy, @Msk.Format(i.ReviewedAt)</div>
+                }
+            </div>
+        </div>
+    }
+    @if (items.Count < total)
+    {
+        <button class="btn btn-outline-secondary" @onclick="LoadMore">Показать ещё (@(total - items.Count))</button>
+    }
+}
+
+@code {
+    private const int PageSize = 30;
+
+    private static readonly (MonitoredItemStatus, string)[] Tabs =
+    [
+        (MonitoredItemStatus.Candidate, "Похожие на наши"),
+        (MonitoredItemStatus.Mention, "Упоминания"),
+        (MonitoredItemStatus.Confirmed, "Подтверждённые"),
+        (MonitoredItemStatus.Dismissed, "Отклонённые"),
+    ];
+
+    [SupplyParameterFromQuery(Name = "status")] public int? QStatus { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private MonitoredItemStatus status;
+    private List<MonitoredItem>? items;
+    private Dictionary<MonitoredItemStatus, int> counts = [];
+    private Dictionary<int, int?> otherIds = [];
+    private int total, shown = PageSize;
+    private bool busy;
+    private string? error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        status = QStatus is { } s && Enum.IsDefined((MonitoredItemStatus)s) && s != 0 ? (MonitoredItemStatus)s : MonitoredItemStatus.Candidate;
+        shown = PageSize;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        counts = await db.MonitoredItems.Where(i => i.Status != MonitoredItemStatus.Irrelevant)
+            .GroupBy(i => i.Status).Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
+        var query = db.MonitoredItems.AsNoTracking().Where(i => i.Status == status);
+        total = await query.CountAsync();
+        query = status == MonitoredItemStatus.Candidate
+            ? query.OrderByDescending(i => i.Score).ThenByDescending(i => i.PublishedAt)
+            : query.OrderByDescending(i => i.ReviewedAt ?? i.FoundAt);
+        items = await query.Include(i => i.Resource).Include(i => i.SuggestedMaterial).Take(shown).ToListAsync();
+        foreach (var i in items) otherIds.TryAdd(i.Id, null);
+    }
+
+    private async Task LoadMore()
+    {
+        shown += PageSize;
+        await LoadAsync();
+    }
+
+    private async Task ConfirmAsync(MonitoredItem item, int sourceId)
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            error = await Materials.ConfirmMonitoredAsync(item.Id, sourceId, [], await UserNameAsync());
+            if (error == null) await LoadAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SetStatusAsync(MonitoredItem item, MonitoredItemStatus newStatus)
+    {
+        await Materials.SetMonitoredStatusAsync(item.Id, newStatus, await UserNameAsync());
+        await LoadAsync();
+    }
+
+    private static string Snippet(MonitoredItem i) => i.Text ?? i.Summary ?? "";
+
+    private static string Truncate(string s, int n) => s.Length <= n ? s : s[..n].TrimEnd() + "…";
+
+    private async Task<string?> UserNameAsync() => (await AuthState).User.Identity?.Name;
+}
