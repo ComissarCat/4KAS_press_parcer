@@ -51,36 +51,60 @@ public partial class PageMetadataService(HtmlFetcher fetcher, ILogger<PageMetada
         if (DateTimeOffset.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dto))
             published = dto.UtcDateTime;
 
-        var container = doc.QuerySelector("[itemprop='articleBody']") ?? MainTextBlock(doc) ?? doc.Body;
-        var paragraphs = container?.QuerySelectorAll("p").Select(p => p.TextContent.Trim()).Where(t => t.Length > 0).ToList();
-        var text = paragraphs is { Count: > 0 }
-            ? string.Join("\n\n", paragraphs)
-            : Meta("meta[property='og:description']") ?? Meta("meta[name='description']");
-        text = CollectorText.Clean(text);
+        var articleBody = doc.QuerySelector("[itemprop='articleBody']");
+        var paragraphs = articleBody != null
+            ? articleBody.QuerySelectorAll("*").Where(IsParagraph).ToList()
+            : MainParagraphs(doc);
+        var text = CollectorText.Clean(string.Join("\n\n", paragraphs.Select(p => p.TextContent.Trim())));
+        // некоторые сайты (например, «Коммерсантъ») кладут весь текст статьи в описание страницы
+        var description = CollectorText.Clean(Meta("meta[property='og:description']") ?? Meta("meta[name='description']"));
+        if (description.Length > text.Length) text = description;
         if (text.Length > MaxTextLength) text = text[..MaxTextLength];
 
-        var links = container?.QuerySelectorAll("a[href]").OfType<IHtmlAnchorElement>()
-            .Select(a => a.Href).Where(h => h.StartsWith("http")).Distinct().ToList() ?? [];
+        var links = paragraphs.SelectMany(p => p.QuerySelectorAll("a[href]").OfType<IHtmlAnchorElement>())
+            .Select(a => a.Href).Where(h => h.StartsWith("http")).Distinct().ToList();
 
         return new PageMetadata(title == null ? null : CollectorText.Clean(title), published, text.Length > 0 ? text : null, links);
     }
 
     /// <summary>
-    /// Основной текст статьи — блок, у которого больше всего текста в собственных абзацах.
-    /// Так отсекаются меню, боковые ленты «Читайте также» и подвал.
+    /// Абзац связного текста: &lt;p&gt; или блок без вложенных блоков (так верстают некоторые сайты).
+    /// Меню, ленты «Читайте также» и подвал отсекаются по доле текста в ссылках, а блоки — ещё и по отсутствию
+    /// предложений.
     /// </summary>
-    private static IElement? MainTextBlock(IHtmlDocument doc)
+    private static bool IsParagraph(IElement el)
     {
-        IElement? best = null;
-        var bestLength = 0;
-        foreach (var el in doc.Body?.QuerySelectorAll("*") ?? Enumerable.Empty<IElement>())
-        {
-            var length = el.Children.Where(c => c.LocalName == "p").Sum(p => p.TextContent.Trim().Length);
-            if (length <= bestLength) continue;
-            best = el;
-            bestLength = length;
-        }
-        return bestLength >= 200 ? best : null;
+        bool isDiv;
+        if (el.LocalName == "p") isDiv = false;
+        else if (el.LocalName == "div" && el.Closest("p") == null && !el.Children.Any(c => c.LocalName is "div" or "p")) isDiv = true;
+        else return false;
+
+        // абзацы внутри ссылок (ленты новостей), меню, шапки и подвала — не текст статьи
+        if (el.Closest("a, nav, header, footer, aside") != null) return false;
+        var text = el.TextContent.Trim();
+        if (text.Length == 0 || isDiv && (text.Length < 60 || !text.Contains(". ") && !text.EndsWith('.'))) return false;
+        var linkText = el.QuerySelectorAll("a").Sum(a => a.TextContent.Trim().Length);
+        return linkText < text.Length * 0.3;
+    }
+
+    /// <summary>
+    /// Абзацы основного текста статьи. Абзацы группируются по «адресу» в разметке — тегу и классам
+    /// родителя и «деда»: абзацы статьи свёрстаны одинаково (даже если каждый обёрнут в свои блоки, как
+    /// у «Коммерсанта»), а меню, ленты и подвал — иначе. Побеждает группа с наибольшим объёмом текста.
+    /// </summary>
+    private static List<IElement> MainParagraphs(IHtmlDocument doc)
+    {
+        static string Node(IElement? e) =>
+            e == null ? "" : e.LocalName + "." + string.Join(".", e.ClassList.OrderBy(c => c, StringComparer.Ordinal));
+
+        var all = doc.Body?.QuerySelectorAll("*").Where(IsParagraph).ToList() ?? [];
+        var best = all
+            .GroupBy(p => p.LocalName + "<" + Node(p.ParentElement) + "<" + Node(p.ParentElement?.ParentElement))
+            .Select(g => (Paragraphs: g.ToList(), Length: g.Sum(p => p.TextContent.Trim().Length)))
+            .OrderByDescending(g => g.Length)
+            .FirstOrDefault();
+        // совсем короткая страница — берём все абзацы
+        return best.Length >= 200 ? best.Paragraphs : all;
     }
 
     [GeneratedRegex(@"""datePublished""\s*:\s*""([^""]+)""")]

@@ -15,6 +15,9 @@ public class UrlKeyTests
     [InlineData("https://m.vk.com/wall-217666653_10", "vk.com/wall-217666653_10")]
     [InlineData("https://vk.com/4kassud?w=wall-217666653_10", "vk.com/wall-217666653_10")]
     [InlineData("example.ru/a", "example.ru/a")]
+    [InlineData("https://kubnews.ru/amp/obshchestvo/2026/10/09/delo/", "kubnews.ru/obshchestvo/2026/10/09/delo")]
+    [InlineData("https://rg.ru/amp/2026/10/09/reg-ufo/delo.html", "rg.ru/2026/10/09/reg-ufo/delo.html")]
+    [InlineData("https://example.ru/news/1/amp", "example.ru/news/1")]
     public void Normalizes(string url, string expected) => Assert.Equal(expected, UrlKey.TryCreate(url));
 
     [Theory]

@@ -36,6 +36,9 @@ public static partial class UrlKey
         };
 
         var path = Uri.UnescapeDataString(uri.AbsolutePath).TrimEnd('/').ToLowerInvariant();
+        // AMP-версия страницы — та же публикация: site.ru/amp/news/1, site.ru/news/1/amp → site.ru/news/1
+        if (path.StartsWith("/amp/")) path = path[4..];
+        if (path.EndsWith("/amp")) path = path[..^4];
         var query = ParseQuery(uri.Query);
 
         if (host == "t.me")

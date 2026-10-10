@@ -128,6 +128,42 @@ public class CollectorParsingTests
         Assert.Contains("User authorization failed", ex.Message);
     }
 
+    private const string Para1 = "Четвертый кассационный суд отменил апелляционное определение по делу о похищении предпринимателя. Материалы вернутся в краевой суд.";
+    private const string Para2 = "Жалобы защиты двух осужденных рассмотрела судебная коллегия по уголовным делам. Адвокаты добивались отмены приговора.";
+    private const string Footer = "© АО «Издательский дом». 127006, Москва, переулок д. 41. Сетевое издание зарегистрировано Федеральной службой по надзору в сфере связи.";
+
+    [Fact]
+    public void MainTextWhenEachParagraphIsWrappedInBlocks()
+    {
+        // как у «Коммерсанта»: каждый абзац — div в трёх своих обёртках, подвал длиннее любого абзаца
+        static string Block(string p) =>
+            $"""<div class="text-block"><div class="block"><div class="paragraphs"><div class="paragraph">{p}</div></div></div></div>""";
+        var doc = HtmlFetcher.Parse($"""
+            <html><body>
+              <div class="article">{Block(Para1)}{Block(Para2)}</div>
+              <div class="footer-info"><div class="copy">{Footer}</div></div>
+            </body></html>
+            """);
+        var meta = PageMetadataService.Parse(doc);
+        Assert.Equal(Para1 + "\n\n" + Para2, meta.Text);
+    }
+
+    [Fact]
+    public void MainTextIgnoresNewsFeedLinks()
+    {
+        // как у Business FM: боковая лента новостей из <a><p>…</p></a>
+        var feed = string.Concat(Enumerable.Range(1, 30).Select(i =>
+            $"""<div class="py-2"><a href="/news/{i}"><p><span>09:{i:00}</span> <span>Новость номер {i} о событиях в регионе за день.</span></p></a></div>"""));
+        var doc = HtmlFetcher.Parse($"""
+            <html><body>
+              <div class="publication"><div class="feed">{feed}</div>
+              <div class="article_text"><p>{Para1}</p><p>{Para2}</p></div></div>
+            </body></html>
+            """);
+        var meta = PageMetadataService.Parse(doc);
+        Assert.Equal(Para1 + "\n\n" + Para2, meta.Text);
+    }
+
     [Fact]
     public void GenericMetadata()
     {

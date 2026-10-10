@@ -16,7 +16,7 @@ public class MonitoringOptions
     /// </summary>
     public double PrefilterThreshold { get; set; } = 0.3;
     /// <summary>Похожесть полного текста, начиная с которой публикация предлагается как перепечатка.</summary>
-    public double CandidateThreshold { get; set; } = 0.3;
+    public double CandidateThreshold { get; set; } = 0.35;
     /// <summary>
     /// Для коротких публикаций (посты в Telegram): кандидат, если такая доля «веса» публикации приходится
     /// на слова нашего материала и общих слов не меньше <see cref="ShortItemMinCommon"/>.
@@ -54,6 +54,25 @@ public class MonitoringService(
         var index = await BuildIndexAsync(db, opt, items.Select(i => i.Title + "\n" + i.Text), ct);
         var keywords = new KeywordMatcher(await settings.GetKeywordsAsync(ct));
         var ownPrefixes = await OwnPrefixesAsync(db, ct);
+        // публикации, уже связанные с нашими материалами: пост, ссылающийся на такую статью, — про тот же материал
+        var matchedLinks = (await db.MonitoredItems
+                .Where(i => i.SuggestedMaterialId != null &&
+                            (i.Status == MonitoredItemStatus.Candidate || i.Status == MonitoredItemStatus.Confirmed))
+                .Select(i => new { i.UrlKey, MaterialId = i.SuggestedMaterialId!.Value })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.UrlKey, x => x.MaterialId);
+
+        // лимит загрузок полного текста тратим в первую очередь на самые многообещающие публикации
+        var toFetch = items
+            .Where(i => i.IsSummaryOnly)
+            .Select(i => (Item: i, Priority: resource.FetchFullText || keywords.FindIn(i.Title + "\n" + i.Text) != null
+                ? 2.0
+                : index.Best(i.Title, i.Text, i.PublishedAt)?.ItemCoverage ?? 0))
+            .Where(x => x.Priority >= opt.PrefilterThreshold)
+            .OrderByDescending(x => x.Priority)
+            .Take(opt.MaxFetchesPerRun)
+            .Select(x => x.Item)
+            .ToHashSet();
 
         int candidates = 0, mentions = 0, fetches = 0;
         foreach (var item in items)
@@ -75,27 +94,21 @@ public class MonitoringService(
             };
             var links = item.OutLinks.Append(item.RepostSource).OfType<string>().ToList();
 
-            if (item.IsSummaryOnly && fetches < opt.MaxFetchesPerRun)
+            if (toFetch.Contains(item))
             {
-                var pre = index.Best(item.Title, item.Text, item.PublishedAt);
-                var worthFetching = resource.FetchFullText
-                                    || keywords.FindIn(item.Title + "\n" + item.Text) != null
-                                    || pre?.ItemCoverage >= opt.PrefilterThreshold;
-                if (worthFetching)
-                {
-                    fetches++;
-                    var page = await metadata.FetchAsync(item.Url, ct);
-                    // в HTML-списке текст ссылки бывает с датой и мусором — заголовок страницы надёжнее
-                    if (resource.CollectorKind == CollectorKind.HtmlList && page.Title != null) mi.Title = page.Title;
-                    mi.Title ??= page.Title;
-                    mi.PublishedAt ??= page.PublishedAt;
-                    mi.Text = page.Text;
-                    links.AddRange(page.OutLinks ?? []);
-                    await Task.Delay(300, ct);
-                }
+                fetches++;
+                var page = await metadata.FetchAsync(item.Url, ct);
+                // в HTML-списке текст ссылки бывает с датой и мусором — заголовок страницы надёжнее
+                if (resource.CollectorKind == CollectorKind.HtmlList && page.Title != null) mi.Title = page.Title;
+                mi.Title ??= page.Title;
+                mi.PublishedAt ??= page.PublishedAt;
+                mi.Text = page.Text;
+                links.AddRange(page.OutLinks ?? []);
+                await Task.Delay(300, ct);
             }
 
-            Evaluate(mi, links, index, keywords, ownPrefixes, opt);
+            Evaluate(mi, links, index, keywords, ownPrefixes, opt, matchedLinks);
+            if (mi is { Status: MonitoredItemStatus.Candidate, SuggestedMaterialId: { } sid }) matchedLinks.TryAdd(key, sid);
             if (mi.Status == MonitoredItemStatus.Candidate) candidates++;
             if (mi.Status == MonitoredItemStatus.Mention) mentions++;
             // у нерелевантных не храним полный текст: заголовок и анонс нужны, чтобы не обрабатывать
@@ -120,14 +133,16 @@ public class MonitoringService(
         return new CollectRunResult(true, candidates + mentions, 0, message);
     }
 
+    /// <param name="matchedLinks">Ключи публикаций, уже связанных с нашими материалами (ключ → номер материала).</param>
     public static void Evaluate(MonitoredItem mi, IEnumerable<string> links, MaterialIndex index, KeywordMatcher keywords,
-        IReadOnlyList<string> ownPrefixes, MonitoringOptions opt)
+        IReadOnlyList<string> ownPrefixes, MonitoringOptions opt, IReadOnlyDictionary<string, int>? matchedLinks = null)
     {
         var linkKeys = links.Select(UrlKey.TryCreate).OfType<string>().ToHashSet();
         var text = mi.Text ?? mi.Summary;
         var match = index.Best(mi.Title, text, mi.PublishedAt, linkKeys);
         var keyword = keywords.FindIn(mi.Title + "\n" + text);
         var linksToOwn = linkKeys.FirstOrDefault(k => ownPrefixes.Any(p => ResourceResolver.Matches(k, p)));
+        var linksToMatched = linkKeys.FirstOrDefault(k => matchedLinks?.ContainsKey(k) == true);
 
         mi.Score = match?.Score;
         mi.SuggestedMaterialId = match?.Material.Id;
@@ -138,6 +153,13 @@ public class MonitoringService(
         {
             mi.Status = MonitoredItemStatus.Candidate;
             mi.MatchInfo = match!.Info;
+        }
+        else if (linksToMatched != null)
+        {
+            // пост со ссылкой на статью, которая уже связана с нашим материалом (Telegram-канал издания → его сайт)
+            mi.Status = MonitoredItemStatus.Candidate;
+            mi.SuggestedMaterialId = matchedLinks![linksToMatched];
+            mi.MatchInfo = $"ссылается на публикацию, связанную с нашим материалом: {linksToMatched}";
         }
         else if (keyword != null || linksToOwn != null)
         {

@@ -159,6 +159,13 @@ public class MonitoringTests
         MonitoringService.Evaluate(linksToCaseCard, ["https://4kas.sudrf.ru/modules.php?name=sud_delo&case_id=1"], index, keywords, own, opt);
         Assert.Equal(MonitoredItemStatus.Mention, linksToCaseCard.Status);
 
+        // пост канала издания со ссылкой на уже найденную статью этого издания
+        var post = new MonitoredItem { Title = "Кассация вернула дело", Text = "Коротко о главном" };
+        var matched = new Dictionary<string, int> { ["rapsinews.ru/judicial_news/20261009/1.html"] = 1 };
+        MonitoringService.Evaluate(post, ["https://www.rapsinews.ru/judicial_news/20261009/1.html"], index, keywords, own, opt, matched);
+        Assert.Equal(MonitoredItemStatus.Candidate, post.Status);
+        Assert.Equal(1, post.SuggestedMaterialId);
+
         var unrelated = new MonitoredItem { Title = "Джип-тур", Text = UnrelatedText };
         MonitoringService.Evaluate(unrelated, [], index, keywords, own, opt);
         Assert.Equal(MonitoredItemStatus.Irrelevant, unrelated.Status);
